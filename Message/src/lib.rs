@@ -13,23 +13,26 @@ pub enum TargetAddress {
 }
 
 #[derive(Deserialize, Serialize)]
-pub enum NStreamState {
+pub enum NStream {
     Send(String),
 }
 
-pub enum NReqState {
-
+#[derive(Deserialize, Serialize, Debug)]
+pub enum NReq {
+    GetUserFromUid(u64),
+    GetAllUsers
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct NStreamMessage {
-    pub sender: u64,
-    pub receiver: TargetAddress,
-    pub state: NStreamState
+pub enum NReturnReq {
+    GetAllUsers(Vec<UserInfo>),
+    GetUserFromUid(ReturnUser)
 }
 
-pub struct NRequestMessage {
-    pub state: NReqState,
+#[derive(Deserialize, Serialize)]
+pub enum ReturnUser {
+    Ok(UserInfo),
+    Error
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -86,6 +89,10 @@ pub enum ReturnNLoginReq {
     UserNotFound,
     PasswordError,
     UserCreateOK(u64),
+    ConversionBoostSuccessful,
+    ConversionSendStreamSuccessful,
+    ConversionBoostFail,
+    ConversionSendStreamFail
 }
 
 pub fn send_receive<'a, S: Deserialize<'a> + Serialize + Debug>(tcp: &mut TcpStream, send_msg: S) -> String {
@@ -101,7 +108,11 @@ pub fn send<'a, S: Deserialize<'a> + Serialize>(tcp: &mut TcpStream, send_msg: S
 
 pub fn receive(tcp: &TcpStream) -> String {
     let mut ret = String::new();
-    BufReader::new(tcp).read_line(&mut ret).unwrap();
+    match BufReader::new(tcp).read_line(&mut ret) {
+        Ok(0) => return "OVER".to_string(),
+        Err(_) => return "OVER".to_string(),
+        _ => ()
+    }
     println!("{ret}");
     ret
 }

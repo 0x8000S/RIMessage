@@ -1,6 +1,6 @@
 use Message::{UserInfo, UserError, ReturnNLoginReq};
 
-
+#[derive(Debug)]
 pub struct UserManagement {
     user: Vec<UserInfo>
 }
@@ -26,5 +26,8 @@ impl UserManagement {
     }
     pub fn find_user(&self, uid: u64) -> Option<&UserInfo> {
         self.user.iter().find(|x| x.uid == uid)
+    }
+    pub fn get_all_users(&mut self) -> Vec<UserInfo> {
+        self.user.clone()
     }
 }

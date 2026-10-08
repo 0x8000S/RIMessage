@@ -1,27 +1,34 @@
 use std::error::Error;
-use std::fmt::{write, Display, Formatter, Debug};
+use std::fmt::{Display, Formatter, Debug};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::thread::sleep;
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub enum TargetAddress {
     User(u64),
     Group(u64)
 }
 
 #[derive(Deserialize, Serialize)]
-pub enum NStream {
-    Send(String),
+pub enum NPushStream {
+    Send(u64, String),
+    AddFriendReq(u64)
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub enum NReqSigle {
+    Send(TargetAddress, String),
+    AddFriendReq(u64)
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub enum NReq {
     GetUserFromUid(u64),
-    GetAllUsers
+    GetAllUsers,
+    Single(NReqSigle)
 }
+
 
 #[derive(Deserialize, Serialize)]
 pub enum NReturnReq {

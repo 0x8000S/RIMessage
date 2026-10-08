@@ -1,19 +1,17 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read};
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Mutex, Arc};
-use std::thread::{self, sleep};
-use std::time::Duration;
+use std::thread;
 use uuid::Uuid;
-use Message::{receive, NReq, send, NReturnReq, ReturnUser};
+use Message::{NPushStream, NReq, NReqSigle, NReturnReq, ReturnUser, TargetAddress, receive, send};
+use crate::connect_instance::PushCIMessage::SystemReq;
 use crate::user::UserManagement;
 
 #[derive(Debug)]
 pub struct OnlinePool {
     pool: HashMap<u64, ConnectBall>,
     usm: Arc<Mutex<UserManagement>>,
-    running: bool,
     ssender: Sender<CIMessage>,
     srevc: Receiver<CIMessage>,
 }
@@ -24,7 +22,6 @@ impl OnlinePool {
         Self {
             pool: HashMap::new(),
             usm,
-            running: true,
             ssender: bsender,
             srevc: brecv
         }
@@ -43,11 +40,12 @@ impl OnlinePool {
             req_stream: Arc::new(Mutex::new(req)),
             usm: self.usm.clone(),
             sender: self.ssender.clone(),
-            recv: srecv
+            recv: Arc::new(Mutex::new(srecv))
         }));
         let mut cb = ConnectBall {
             instance: ci.clone(),
             send: ssender,
+            willremove: false
         };
         cb.run();
         self.pool.insert(uid, cb);
@@ -58,8 +56,38 @@ impl OnlinePool {
         if let Ok(m) = self.srevc.try_recv() {
             match m {
                 CIMessage::Close(u) => {
-                    self.pool.remove(&u);
-                    println!("在线池id-{u}已被消毁!");
+                    if let Some(i) = self.find_mut_instance(u) {
+                        i.send.send(CIMessage::Push(SystemReq(PushCISystemReq::Close))).unwrap();
+                        i.willremove = true;
+                    }
+                }
+                CIMessage::Push(x) => match x {
+                    PushCIMessage::SystemReq(x) => match x {
+                        PushCISystemReq::ACK(u) => {
+                            if let Some(i) = self.find_mut_instance(u) {
+                                if i.willremove {
+                                    self.pool.remove(&u);
+                                    println!("在线池id-{u}已被消毁!");
+                                }
+                            }
+                        }
+                        _ => ()
+                    }
+                    _ => ()
+                }
+                CIMessage::Req(x) => match x {
+                    ReqCIMessage::Send(s, t, c) => {
+                        if let TargetAddress::User(u) = t {
+                            if let Some(i) = self.find_mut_instance(u) {
+                                i.send.send(CIMessage::Push(PushCIMessage::Send(s, c))).unwrap();
+                            }
+                        }
+                    }
+                    ReqCIMessage::ReqAddFriend(s, t) => {
+                        if let Some(i) = self.find_mut_instance(t) {
+                            i.send.send(CIMessage::Push(PushCIMessage::ReqAddFriend(s))).unwrap();
+                        }
+                    }
                 }
                 _ => ()
             }
@@ -67,9 +95,26 @@ impl OnlinePool {
     }
 }
 
+pub enum PushCISystemReq {
+    Close,
+    ACK(u64)
+}
+
+pub enum PushCIMessage {
+    Send(u64, String),
+    ReqAddFriend(u64),
+    SystemReq(PushCISystemReq)
+}
+
+pub enum ReqCIMessage {
+    Send(u64, TargetAddress, String),
+    ReqAddFriend(u64, u64),
+}
 
 pub enum CIMessage {
     Close(u64),
+    Req(ReqCIMessage),
+    Push(PushCIMessage)
 }
 
 
@@ -79,6 +124,7 @@ pub struct ConnectBall {
     send: mpsc::Sender<CIMessage>,
     // recv: mpsc::Receiver<CIOPMessage>,
     // system_req: 
+    willremove: bool
 }
 
 impl ConnectBall {
@@ -94,7 +140,7 @@ pub struct ConnectInstance {
     push_stream: Arc<Mutex<TcpStream>>,
     req_stream: Arc<Mutex<TcpStream>>,
     usm: Arc<Mutex<UserManagement>>,
-    recv: mpsc::Receiver<CIMessage>,
+    recv: Arc<Mutex<mpsc::Receiver<CIMessage>>>,
     sender: mpsc::Sender<CIMessage>
 }
 
@@ -103,15 +149,50 @@ impl ConnectInstance {
         let tcpc = self.req_stream.clone();
         let usmc = self.usm.clone();
         let sender = self.sender.clone();
+        let esender = self.sender.clone();
+        let psender = self.sender.clone();
         let uid = self.uid;
+        let ptcpc = self.push_stream.clone();
+        let recvc = self.recv.clone();
         thread::spawn(move || {
-                Self::req_thread(tcpc, usmc);
+            loop {
+                while let Ok(msg) = recvc.lock().unwrap().recv() {
+                    if let CIMessage::Push(x) = &msg {
+                        if let PushCIMessage::SystemReq(x) = x {
+                            match x {
+                                PushCISystemReq::Close => {
+                                    println!("System-退出");
+                                    psender.send(CIMessage::Push(PushCIMessage::SystemReq(PushCISystemReq::ACK(uid)))).unwrap();
+                                    return;
+                                }
+                                _ => ()
+                            }
+                        }
+                    }
+                    let ptcpc = ptcpc.clone();
+                    Self::push_thread(ptcpc, msg);
+                }
+            }
+        });
+        thread::spawn(move || {
+                Self::req_thread(tcpc, usmc, sender, uid);
                 println!("请求关闭");
-                let _ = sender.send(CIMessage::Close(uid));
+                let _ = esender.send(CIMessage::Close(uid));
             }
         );
     }
-    pub fn req_thread(tcp_stream: Arc<Mutex<TcpStream>>, usm: Arc<Mutex<UserManagement>>) {
+    pub fn push_thread(tcp_stream: Arc<Mutex<TcpStream>>, recv: CIMessage) {
+        if let CIMessage::Push(pci) = recv {
+            match pci {
+                PushCIMessage::Send(su, c) => {
+                    send(&mut *tcp_stream.lock().unwrap(), NPushStream::Send(su, c));
+                }
+                PushCIMessage::ReqAddFriend(u) => send(&mut *tcp_stream.lock().unwrap(), NPushStream::AddFriendReq(u)),
+                _ => ()
+            }
+        }
+    }        
+    pub fn req_thread(tcp_stream: Arc<Mutex<TcpStream>>, usm: Arc<Mutex<UserManagement>>, sender: Sender<CIMessage>, uid: u64) {
         loop {
             let ret = receive(&*tcp_stream.lock().unwrap());
             if ret == "OVER".to_string() {
@@ -130,6 +211,14 @@ impl ConnectInstance {
                         None => send(&mut *tcp_stream.lock().unwrap(), NReturnReq::GetUserFromUid(
                             ReturnUser::Error
                         ))
+                    }
+                }
+                NReq::Single(x) => match x {
+                    NReqSigle::Send(u, c) => {
+                        sender.send(CIMessage::Req(ReqCIMessage::Send(uid, u, c))).unwrap();
+                    }
+                    NReqSigle::AddFriendReq(u) => {
+                        sender.send(CIMessage::Req(ReqCIMessage::ReqAddFriend(uid, u))).unwrap();
                     }
                 }
             };

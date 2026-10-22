@@ -10,16 +10,18 @@ pub enum TargetAddress {
     Group(u64)
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub enum NPushStream {
-    Send(u64, String),
-    AddFriendReq(u64)
+    Send(u64, ChatMessage),
+    AddFriendReq(u64),
+    SureFriendReq(u64)
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub enum NReqSigle {
-    Send(TargetAddress, String),
-    AddFriendReq(u64)
+    Send(TargetAddress, ChatMessage),
+    AddFriendReq(u64),
+    SureFriendReq(u64)
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -38,7 +40,7 @@ pub enum NReturnReq {
 
 #[derive(Deserialize, Serialize)]
 pub enum ReturnUser {
-    Ok(UserInfo),
+    Ok(UserRef),
     Error
 }
 
@@ -46,8 +48,52 @@ pub enum ReturnUser {
 pub struct UserInfo {
     pub uid: u64,
     pub name: String,
-    pub friend: Vec<u64>,
+    pub friend: Vec<UserRef>,
     pub password: String
+}
+
+impl UserInfo {
+    pub fn add_friend(&mut self, user_ref: UserRef) {
+        if !self.friend.contains(&user_ref) {
+            self.friend.push(user_ref);
+        }
+    }
+    pub fn get_friend(&self) -> Vec<UserRef> {
+        self.friend.clone()
+    }
+}
+
+impl Default for UserInfo {
+    fn default() -> Self {
+        Self { uid: 0, name: "".to_string(), friend: vec![], password: "".to_string() }
+    }
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct UserRef {
+    pub uid: u64,
+    pub name: String,
+}
+
+impl Default for UserRef {
+    fn default() -> Self {
+        Self { uid: 0, name: "".to_string() }
+    }
+}
+
+impl PartialEq for UserRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.uid == other.uid
+    }
+}
+
+pub fn is_friend(user: &UserInfo, other: u64) -> bool {
+    for i in &user.friend {
+        if i.uid == other {
+            return true;
+        }
+    }
+    false
 }
 
 impl PartialEq for UserInfo {
@@ -100,6 +146,24 @@ pub enum ReturnNLoginReq {
     ConversionSendStreamSuccessful,
     ConversionBoostFail,
     ConversionSendStreamFail
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct ChatMessage {
+	pub sender: UserRef,
+	pub message: String
+}
+
+impl Default for ChatMessage {
+	fn default() -> Self {
+		Self { sender: UserRef::default(), message: String::new() }
+	}
+}
+
+impl Display for ChatMessage {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{}: {}", self.sender.name, self.message)
+	}
 }
 
 pub fn send_receive<'a, S: Deserialize<'a> + Serialize + Debug>(tcp: &mut TcpStream, send_msg: S) -> String {

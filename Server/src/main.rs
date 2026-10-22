@@ -135,37 +135,4 @@ impl Server {
 fn main() {
     let mut sver = Server::new();
     sver.listener();
-    // let tcpl = TcpListener::bind("127.0.0.1:7878").unwrap();
-    // let mut usm = UserManagement::new();
-    // usm.add_new_user(usm.new_user("Alice".to_string(), String::from("1234")));
-    // usm.add_new_user(usm.new_user("Elik".to_string(), String::from("5543")));
-    // let mut i = tcpl.accept().unwrap().0;
-    // // for z in 0..41 {
-    // //     let mut m = z.to_string();
-    // //     m.push_str("\n");
-    // //     i.write_all(m.as_ref()).unwrap();
-    // //     sleep(Duration::from_secs(1))
-    // // }
-    // println!("Got!");
-    // let mut msg = String::new();
-    // BufReader::new(&i).read_line(&mut msg).expect("TODO: panic message");
-    // println!("{}", msg.trim());
-
-    // let ret = handling_request(&mut usm, serde_json::from_str(msg.as_str()).expect("REASON"));
-    // let rw = Message::NMessage {
-    //     sender: 0,
-    //     receiver: Message::TargetAddress::User(0),
-    //     state: State::Return(ret)
-    // };
-    // i.write_all(serde_json::to_string(&rw).unwrap().as_bytes()).unwrap();
-
 }
-//
-// fn handling_request(usm: &mut UserManagement, msg: NRequestMessage) -> ReturnNMessage {
-//     match &msg.state {
-//         NReqState::CreateNewUser(name, p) => {
-//             usm.add_new_user(usm.new_user(name.to_string(), p.to_string()))
-//         }
-//         NReqState::Return(x) => ReturnNMessage::OK
-//     }
-// }

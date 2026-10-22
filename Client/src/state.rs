@@ -1,11 +1,11 @@
-use std::net::TcpStream;
 use Message::UserInfo;
 use crate::login::MLoginView;
 use crate::main_view::MMainView;
 use crate::popup::MPopupView;
+use crate::tab::MTabView;
 use crate::user_card::MUserCard;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum RMessage {
     LoginView(MLoginView),
     PopupView(MPopupView),
@@ -13,7 +13,8 @@ pub enum RMessage {
     Login(UserInfo),
     MainView(MMainView),
     Exit,
-    UserCard(MUserCard)
+    UserCard(MUserCard),
+    TabView(MTabView),
 }
 
 pub enum View {
@@ -21,7 +22,7 @@ pub enum View {
     Main
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UXD {
     pub view_padding: f32,
     pub content_space: u32,

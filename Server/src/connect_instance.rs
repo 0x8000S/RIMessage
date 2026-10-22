@@ -4,7 +4,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Mutex, Arc};
 use std::thread;
 use uuid::Uuid;
-use Message::{NPushStream, NReq, NReqSigle, NReturnReq, ReturnUser, TargetAddress, receive, send};
+use Message::{ChatMessage, NPushStream, NReq, NReqSigle, NReturnReq, ReturnUser, TargetAddress, receive, send};
 use crate::connect_instance::PushCIMessage::SystemReq;
 use crate::user::UserManagement;
 
@@ -34,7 +34,7 @@ impl OnlinePool {
     }
     pub fn add_instance(&mut self, push: TcpStream, req: TcpStream, uid: u64) {
         let (ssender, srecv) = mpsc::channel();
-        let mut ci = Arc::new(Mutex::new(ConnectInstance {
+        let ci = Arc::new(Mutex::new(ConnectInstance {
             uid: uid,
             push_stream: Arc::new(Mutex::new(push)),
             req_stream: Arc::new(Mutex::new(req)),
@@ -88,8 +88,12 @@ impl OnlinePool {
                             i.send.send(CIMessage::Push(PushCIMessage::ReqAddFriend(s))).unwrap();
                         }
                     }
+                    ReqCIMessage::ReqSureFriend(s, t) => {
+                        if let Some(i) = self.find_mut_instance(t) {
+                            i.send.send(CIMessage::Push(PushCIMessage::ReqSureFriend(s))).unwrap();
+                        }
+                    }
                 }
-                _ => ()
             }
         }
     }
@@ -101,14 +105,16 @@ pub enum PushCISystemReq {
 }
 
 pub enum PushCIMessage {
-    Send(u64, String),
+    Send(u64, ChatMessage),
     ReqAddFriend(u64),
+    ReqSureFriend(u64),
     SystemReq(PushCISystemReq)
 }
 
 pub enum ReqCIMessage {
-    Send(u64, TargetAddress, String),
+    Send(u64, TargetAddress, ChatMessage),
     ReqAddFriend(u64, u64),
+    ReqSureFriend(u64, u64)
 }
 
 pub enum CIMessage {
@@ -188,6 +194,7 @@ impl ConnectInstance {
                     send(&mut *tcp_stream.lock().unwrap(), NPushStream::Send(su, c));
                 }
                 PushCIMessage::ReqAddFriend(u) => send(&mut *tcp_stream.lock().unwrap(), NPushStream::AddFriendReq(u)),
+                PushCIMessage::ReqSureFriend(u) => send(&mut *tcp_stream.lock().unwrap(), NPushStream::SureFriendReq(u)),
                 _ => ()
             }
         }
@@ -204,7 +211,7 @@ impl ConnectInstance {
                     send(&mut *tcp_stream.lock().unwrap(), NReturnReq::GetAllUsers(usm.lock().unwrap().get_all_users()))
                 }
                 NReq::GetUserFromUid(u) => {
-                    match usm.lock().unwrap().find_user(u) {
+                    match usm.lock().unwrap().find_user_ref(u) {
                         Some(x) => send(&mut *tcp_stream.lock().unwrap(), NReturnReq::GetUserFromUid(
                             ReturnUser::Ok(x.clone())
                         )),
@@ -219,6 +226,11 @@ impl ConnectInstance {
                     }
                     NReqSigle::AddFriendReq(u) => {
                         sender.send(CIMessage::Req(ReqCIMessage::ReqAddFriend(uid, u))).unwrap();
+                    },
+                    NReqSigle::SureFriendReq(u) => {
+                        println!("SureFd from {uid} to {u}");
+                        usm.lock().unwrap().add_friend(uid, u);
+                        sender.send(CIMessage::Req(ReqCIMessage::ReqSureFriend(uid, u))).unwrap();
                     }
                 }
             };

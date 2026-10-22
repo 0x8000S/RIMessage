@@ -3,9 +3,11 @@ mod state;
 mod login;
 mod popup;
 mod main_view;
-mod main_view_sidebar;
 mod user_card;
 mod tab;
+mod main_search_page;
+mod main_req_page;
+mod main_chat_with_page;
 
 fn main() -> iced::Result {
     // iced::application(app::LoginView::default, app::LoginView::update, app::LoginView::view)

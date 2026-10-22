@@ -1,14 +1,13 @@
 use iced::{widget, Task};
-use iced::widget::row;
 use crate::state::{RMessage, UXD};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Btn {
     pub(crate) name: String,
     pub(crate) msg: RMessage
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MPopupView {
     BtnOk,
     ShowTextPopup(String, String, Vec<Btn>),
@@ -75,11 +74,6 @@ impl BasePopup {
         ).unwrap_or_else(||
             widget::space().into()
         )
-    }
-    fn set_text_show(&mut self, t: String, c: String) {
-        self.title = t;
-        self.content = c;
-        self.show = true;
     }
     fn btn_ok() -> Vec<Btn> {
         vec![Btn{

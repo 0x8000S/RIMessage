@@ -1,4 +1,4 @@
-use Message::{UserInfo, UserError, ReturnNLoginReq};
+use Message::{ReturnNLoginReq, UserInfo, UserRef};
 
 #[derive(Debug)]
 pub struct UserManagement {
@@ -27,7 +27,28 @@ impl UserManagement {
     pub fn find_user(&self, uid: u64) -> Option<&UserInfo> {
         self.user.iter().find(|x| x.uid == uid)
     }
+    pub fn get_mut_user(&mut self, uid: u64) -> Option<&mut UserInfo> {
+        let index = self.user.iter().position(|x| x.uid == uid);
+        match index {
+            Some(i) => Some(self.user.get_mut(i).unwrap()),
+            None => None
+        }
+    }
+    pub fn find_user_ref(&self, uid: u64) -> Option<UserRef> {
+        if let Some(x) = self.user.iter().find(|x| x.uid == uid) {
+            Some(UserRef {
+                name: x.name.clone(),
+                uid: uid
+            })
+        } else {
+            None
+        }
+    }
     pub fn get_all_users(&mut self) -> Vec<UserInfo> {
         self.user.clone()
+    }
+    pub fn add_friend(&mut self, p: u64, c: u64) {
+        let a = self.find_user_ref(c).unwrap().clone();
+        self.get_mut_user(p).unwrap().add_friend(a);
     }
 }

@@ -1,11 +1,10 @@
-use std::io::{Write, BufReader, BufRead};
 use std::net::TcpStream;
 use iced::{widget, Theme, Task};
 use Message::{send_receive, LoginReqState, LoginRequest, ReturnNLoginReq, UserInfo};
 use crate::popup::MPopupView;
 use crate::state::{RMessage, UXD};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MLoginView {
     WhenUidType(String),
     WhenPassWordType(String),
@@ -29,6 +28,7 @@ pub struct LoginView {
     tip: String,
     state: ViewState
 }
+
 
 impl LoginView {
     pub fn new(uxd: UXD) -> Self {
@@ -75,8 +75,12 @@ impl LoginView {
         match msg {
             MLoginView::WhenUidType(u) => {
                 if self.state == ViewState::Login {
-                    if let Ok(v) = u.parse::<u64>() {
+                    if let Ok(_) = u.parse::<u64>() {
                         self.uid = u;
+                    } else {
+                        if u.is_empty() {
+                            self.uid.clear();
+                        }
                     }
                 } else {
                     self.uid = u;
@@ -102,6 +106,8 @@ impl LoginView {
         };
         Task::none()
     }
+    
+    
     pub fn login(&mut self) -> iced::Task<RMessage> {
         dbg!(&self);
         if let Err(_) = self.uid.parse::<u64>() {
@@ -173,7 +179,7 @@ impl LoginView {
             if let ReturnNLoginReq::UserCreateOK(u) = ret {
                 println!("目标用户创建成功!\nuid: {u}");
                 return Task::done(RMessage::PopupView(MPopupView::ShowTextPopupWithOk("用户创建成功!".to_string(),
-                 format!("您的uid: {u}"))))
+                format!("您的uid: {u}"))))
             }
         };
         Task::none()

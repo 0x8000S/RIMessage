@@ -1,10 +1,7 @@
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
 use std::time::Duration;
 use iced;
 use iced::{widget, Task};
 use iced::widget::stack;
-use iced_aw;
 
 use crate::state::{View, RMessage, UXD};
 use crate::login::LoginView;
@@ -12,7 +9,6 @@ use crate::main_view::MainView;
 use crate::popup::BasePopup;
 
 pub struct RIMessage {
-    ret: String,
     view: View,
     uxd: UXD,
     login_view: LoginView,
@@ -21,21 +17,7 @@ pub struct RIMessage {
 }
 impl Default for RIMessage {
     fn default() -> Self {
-        // let mut revc = TcpStream::connect("127.0.0.1:7878").unwrap();
-        // let rq = NMessage {
-        //     sender: 0,
-        //     receiver: Message::TargetAddress::User(0),
-        //     state: Message::State::CreateNewUser("Alice".to_string())
-        // };
-        // let mut msg = serde_json::to_string(&rq).unwrap();
-        // msg.push_str("\n");
-        // revc.write_all(msg.as_bytes()).unwrap();
-        // println!("Send!");
-        let mut ret = String::new();
-        // BufReader::new(&revc).read_line(&mut ret).unwrap();
-        // println!("Get return msg: {}", ret);
         Self {
-            ret,
             view: View::Login,
             uxd: UXD::default(),
             login_view: LoginView::new(UXD::default()),
@@ -46,6 +28,15 @@ impl Default for RIMessage {
 }
 
 impl RIMessage {
+    pub fn new(uxd: UXD) -> Self {
+        Self { 
+            view: View::Login, 
+            uxd: uxd.clone(), 
+            login_view: LoginView::new(uxd.clone()), 
+            popup_view: BasePopup::new(uxd.clone()), 
+            main_view: MainView::new(uxd.clone())
+        }
+    }
     pub fn view(&self) -> iced::Element<'_, RMessage> {
         stack![
             widget::space().width(iced::Fill).height(iced::Fill),
@@ -65,6 +56,7 @@ impl RIMessage {
                 // let mut s = String::new();
                 // BufReader::new(&self.tcp).read_line(&mut s).unwrap();
                 // self.ret = s;
+                self.main_view.sync();
                 Task::none()
             }
             RMessage::LoginView(m) => self.login_view.update(m),
@@ -79,10 +71,12 @@ impl RIMessage {
             }
             RMessage::MainView(m) => self.main_view.update(m),
             RMessage::Exit => iced::exit(),
-            RMessage::UserCard(m) => self.main_view.msg_user_card(m)
+            RMessage::UserCard(m) => self.main_view.msg_user_card(m),
+            RMessage::TabView(m) => self.main_view.msg_tab_view(m),
+            
         }
     }
     pub fn subscription(&self) -> iced::Subscription<RMessage> {
-        iced::time::every(Duration::from_secs(1)).map(|_| RMessage::Sync)
+        iced::time::every(Duration::from_millis(500)).map(|_| RMessage::Sync)
     }
 }

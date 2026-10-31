@@ -5,15 +5,23 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
+use serde::{Deserialize, Serialize};
 use user::UserManagement;
-use Message::{LoginRequest, ReturnNLoginReq, receive, send, LoginReqState};
-use crate::connect_instance::{ObserveConnectionInstance, ObserverPool, OnlinePool};
+use Message::{LoginReqState, LoginRequest, ReturnNLoginReq, UserRef, receive, send};
+use crate::connect_instance::{ConnectBallRef, ObserveConnectionInstanceRef, ObserverPool, OnlinePool};
 
 struct Server {
     online_pool: Arc<Mutex<OnlinePool>>,
     usm: Arc<Mutex<UserManagement>>,
     tcp_listener: TcpListener,
     observer_pool: Arc<Mutex<ObserverPool>>
+}
+
+#[derive(Deserialize, Serialize)]
+struct ServerState {
+    user: Vec<UserRef>,
+    online: Vec<ConnectBallRef>,
+    obse: Vec<ObserveConnectionInstanceRef>
 }
 
 #[derive(Debug)]
@@ -49,7 +57,7 @@ impl Server {
                 // println!("START CLEAR");
                 oplcc.lock().unwrap().message_stream();
                 // println!("FINAL CLEAR");
-                sleep(Duration::from_secs(1));
+                // sleep(Duration::from_secs(1));
             }
         });
         for i in self.tcp_listener.incoming() {
@@ -69,7 +77,6 @@ impl Server {
         }
     }
     fn handling_request(mut sfa: ServerFA) {
-        // let sfac = sfa.clone();
         loop {
             let msg = receive(&sfa.tcp);
             if msg == "OVER".to_string() {
@@ -79,6 +86,14 @@ impl Server {
             if msg.is_empty() {
                 continue;
             }
+            if msg == "GetServerState\n" {
+                send(&mut sfa.tcp, ServerState {
+                    user: sfa.usm.lock().unwrap().get_all_user_ref(),
+                    online: sfa.olp.lock().unwrap().get_data_ref(),
+                    obse: sfa.op.lock().unwrap().get_data_ref()
+                });
+                continue;
+            }
             let req: LoginRequest = serde_json::from_str(msg.trim()).unwrap();
             match &req.state {
                 LoginReqState::Login => Server::login(&req, &mut sfa),
@@ -86,7 +101,7 @@ impl Server {
                 LoginReqState::ConversionBoost => {
                     if let Some(o) = &mut sfa.op.lock().unwrap().find_observer(req.uid) {
                         send(&mut sfa.tcp, ReturnNLoginReq::ConversionBoostSuccessful);
-                        o.req_stream = Some(sfa.tcp);
+                        o.add_req(sfa.tcp);
                         return;
                     }
                     send(&mut sfa.tcp, ReturnNLoginReq::ConversionBoostFail);
@@ -95,10 +110,7 @@ impl Server {
                     if let Some(o) = sfa.op.lock().unwrap().find_observer(req.uid) {
                         if o.token == *token {
                             send(&mut sfa.tcp, ReturnNLoginReq::ConversionSendStreamSuccessful);
-                            o.push_stream = Some(sfa.tcp);
-                            if o.observe() {
-                                println!("UID={} 观察池已成功匹配", req.uid);
-                            }
+                            o.add_push(sfa.tcp);
                             return;
                         }
                         send(&mut sfa.tcp, ReturnNLoginReq::ConversionSendStreamFail);
@@ -113,9 +125,7 @@ impl Server {
         let msg = {
             if let Some(u) = sfa.usm.lock().unwrap().find_user(req.uid) {
                 if u.password == req.password {
-                    let oci = ObserveConnectionInstance::new();
-                    let token = oci.token.clone();
-                    sfa.op.lock().unwrap().add_observer(oci, u.uid);
+                    let token = sfa.op.lock().unwrap().add_observer(u.uid);
                     ReturnNLoginReq::OK(u.clone(), token)
                 } else {
                     ReturnNLoginReq::PasswordError

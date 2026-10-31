@@ -53,9 +53,6 @@ impl RIMessage {
     pub fn update(&mut self, msg: RMessage) -> iced::Task<RMessage> {
         match msg {
             RMessage::Sync => {
-                // let mut s = String::new();
-                // BufReader::new(&self.tcp).read_line(&mut s).unwrap();
-                // self.ret = s;
                 self.main_view.sync();
                 Task::none()
             }

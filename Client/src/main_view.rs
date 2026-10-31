@@ -3,9 +3,9 @@ use std::net::TcpStream;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use iced::{widget, Task};
-use Message::{ChatMessage, LoginReqState, LoginRequest, NPushStream, NReq, NReturnReq, ReturnNLoginReq, ReturnUser, UserInfo, UserRef, is_friend, send, send_receive};
+use Message::{ChatMessage, LoginReqState, LoginRequest, NPushStream, NReq, NReturnReq, ReturnNLoginReq, ReturnUser, UserInfo, UserRef, send, send_receive};
 use crate::main_chat_with_page::{ChatWith, MMainChat};
-use crate::main_req_page::ReqFriendPage;
+use crate::main_req_page::{CardMode, CardUnit, ReqFriendPage};
 use crate::main_search_page::{MMainSearchPage, SearchPage};
 use crate::main_view::MMainView::GoPage;
 use crate::popup::{Btn, MPopupView};
@@ -214,20 +214,16 @@ impl MainView {
                 if let Some(rs) = &mut self.req_stream {
                     if let Some(user_info) = &mut self.user {
                         user_info.add_friend(u.clone());
-                        let idx = self.req_page.wait_list.iter().position(|x| *x == u);
-                        if let Some(i) = idx {
-                            self.req_page.wait_list.remove(i);
-                        }
-                        // println!("Add Fr - {u}");
+                        self.req_page.remove(u.clone(), CardMode::ReqFriend);
                         send(rs, NReq::Single(Message::NReqSigle::SureFriendReq(u.uid)));
-                        // user_info.friend.push(u.clone());
                     }
                 }
             }
-            MUserCard::None(u) => {
-                let idx = self.req_page.wait_list.iter().position(|x| *x == u);
-                if let Some(i) = idx {
-                    self.req_page.wait_list.remove(i);
+            MUserCard::ReqFriendNone(u) => self.req_page.remove(u, CardMode::ReqFriend),
+            MUserCard::ReqIntoGroupNone(u) => self.req_page.remove(u, CardMode::ReqIntoGroup),
+            MUserCard::SureGroup(gr) => {
+                if let Some(u) = &mut self.user {
+                    u.group.push(gr);
                 }
             }
         }
@@ -263,44 +259,39 @@ impl MainView {
             }
         });
     }
+    pub fn get_user_ref(&mut self, uid: u64) -> Option<UserRef> {
+        if let Some(rs) = &mut self.req_stream {
+            let ret = send_receive(rs, NReq::GetUserFromUid(uid));
+            let ret:NReturnReq = serde_json::from_str(ret.as_str()).unwrap();
+            if let NReturnReq::GetUserFromUid(ur) = ret {
+                if let ReturnUser::Ok(retu) = ur {
+                    return Some(retu);
+                }
+            }
+        }
+        None
+    }
     pub fn sync(&mut self) {
-        // println!("SYNC");
         if let Some(x) = &self.recv {
             if let Ok(m) = x.try_recv() {
                 dbg!(&m);
                 match m {
                     NPushStream::AddFriendReq(u) => {
-                        if let Some(rs) = &mut self.req_stream {
-                            let ret = send_receive(rs, NReq::GetUserFromUid(u));
-                            let ret:NReturnReq = serde_json::from_str(ret.as_str()).unwrap();
-                            if let NReturnReq::GetUserFromUid(ur) = ret {
-                                if let ReturnUser::Ok(retu) = ur {
-                                    if !self.req_page.wait_list.contains(&retu) {
-                                        self.req_page.wait_list.push(retu);
-                                    }
-                                    // if let Some(user_info) = &mut self.user {
-                                    //     user_info.friend.push(retu);
-                                    //     println!("Add Fr - {u}");
-                                    //     send(rs, NReq::Single(Message::NReqSigle::SureFriendReq(u)));
-                                    // }
-                                }
+                        if let Some(ur) = self.get_user_ref(u) {
+                            if self.req_page.wait_list.iter().find(|x| x.mode == CardMode::ReqFriend && x.user.uid == u).is_none() {
+                                self.req_page.wait_list.push(CardUnit {
+                                    user: ur,
+                                    mode: CardMode::ReqFriend,
+                                    gr: None
+                                });
                             }
                         }
                     }
                     NPushStream::SureFriendReq(u) => {
-                        if let Some(rs) = &mut self.req_stream {
-                            let ret = send_receive(rs, NReq::GetUserFromUid(u));
-                            let ret:NReturnReq = serde_json::from_str(ret.as_str()).unwrap();
-                            if let NReturnReq::GetUserFromUid(ur) = ret {
-                                if let ReturnUser::Ok(retu) = ur {
-                                    if let Some(user_info) = &mut self.user {
-                                        user_info.add_friend(retu);
-                                        println!("Add Fr");
-                                        if !is_friend(&user_info, u) {
-                                            send(rs, NReq::Single(Message::NReqSigle::SureFriendReq(u)));
-                                        }
-                                    }
-                                }
+                        if let Some(ur) = self.get_user_ref(u) {
+                            if let Some(user_info) = &mut self.user {
+                                user_info.add_friend(ur);
+                                println!("Add Fr");
                             }
                         }
                     }
@@ -308,6 +299,18 @@ impl MainView {
                         println!("Get message: {}", m);
                         self.chat_with_page.record.push_message(u, m);
                     }
+                    NPushStream::InviteGroupReq(u, gr) => {
+                        if let Some(ur) = self.get_user_ref(u) {
+                            if self.req_page.wait_list.iter().find(|x| x.mode == CardMode::ReqIntoGroup && x.user.uid == u).is_none() {
+                                self.req_page.wait_list.push(CardUnit {
+                                    user: ur,
+                                    mode: CardMode::ReqIntoGroup,
+                                    gr: Some(gr)
+                                });
+                            }
+                        }
+                    }
+                    NPushStream::SureGroupReq(s, g) => {}
                 }
             }
         }

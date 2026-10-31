@@ -4,38 +4,47 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, Debug)]
+pub type GroupId = u64;
+pub type UserId = u64;
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum TargetAddress {
-    User(u64),
-    Group(u64)
+    User(UserId),
+    Group(GroupId)
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub enum NPushStream {
-    Send(u64, ChatMessage),
-    AddFriendReq(u64),
-    SureFriendReq(u64)
+    Send(UserId, ChatMessage),
+    AddFriendReq(UserId),
+    SureFriendReq(UserId),
+    InviteGroupReq(UserId, GroupRef),
+    SureGroupReq(UserId, GroupId)
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub enum NReqSigle {
     Send(TargetAddress, ChatMessage),
-    AddFriendReq(u64),
-    SureFriendReq(u64)
+    AddFriendReq(UserId),
+    SureFriendReq(UserId),
+    InviteGroupReq(UserId, GroupId),
+    SureGroupReq(GroupId)
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub enum NReq {
-    GetUserFromUid(u64),
+    GetUserFromUid(UserId),
     GetAllUsers,
-    Single(NReqSigle)
+    Single(NReqSigle),
+    CreateGroup(String)
 }
 
 
 #[derive(Deserialize, Serialize)]
 pub enum NReturnReq {
     GetAllUsers(Vec<UserInfo>),
-    GetUserFromUid(ReturnUser)
+    GetUserFromUid(ReturnUser),
+    CreateGroup(GroupRef)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -46,10 +55,11 @@ pub enum ReturnUser {
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct UserInfo {
-    pub uid: u64,
+    pub uid: UserId,
     pub name: String,
     pub friend: Vec<UserRef>,
-    pub password: String
+    pub password: String,
+    pub group: Vec<GroupRef>
 }
 
 impl UserInfo {
@@ -58,20 +68,31 @@ impl UserInfo {
             self.friend.push(user_ref);
         }
     }
+    pub fn remove_friend(&mut self, user_ref: UserRef) {
+        if let Some(idx) = self.friend.iter().position(|x| *x == user_ref) {
+            self.friend.remove(idx);
+        }
+    }
     pub fn get_friend(&self) -> Vec<UserRef> {
         self.friend.clone()
+    }
+    pub fn to_ref(&self) -> UserRef {
+        UserRef {
+            name: self.name.clone(),
+            uid: self.uid
+        }
     }
 }
 
 impl Default for UserInfo {
     fn default() -> Self {
-        Self { uid: 0, name: "".to_string(), friend: vec![], password: "".to_string() }
+        Self { uid: 0, name: "".to_string(), friend: Vec::new(), password: "".to_string(), group: Vec::new() }
     }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct UserRef {
-    pub uid: u64,
+    pub uid: UserId,
     pub name: String,
 }
 
@@ -86,8 +107,9 @@ impl PartialEq for UserRef {
         self.uid == other.uid
     }
 }
+impl Eq for UserRef {}
 
-pub fn is_friend(user: &UserInfo, other: u64) -> bool {
+pub fn is_friend(user: &UserInfo, other: UserId) -> bool {
     for i in &user.friend {
         if i.uid == other {
             return true;
@@ -99,6 +121,48 @@ pub fn is_friend(user: &UserInfo, other: u64) -> bool {
 impl PartialEq for UserInfo {
     fn eq(&self, other: &Self) -> bool {
         self.uid == other.uid
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub enum GroupPermission {
+    Chat,
+    Administrator,
+    All
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GroupHeader {
+    pub id: GroupId,
+    pub name: String,
+    pub user: Vec<GroupUnit>
+}
+
+
+impl GroupHeader {
+    pub fn to_ref(&self) -> GroupRef {
+        GroupRef {
+            name: self.name.clone(),
+            id: self.id.clone()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GroupUnit {
+    pub user: UserRef,
+    pub permission: GroupPermission
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, PartialOrd)]
+pub struct GroupRef {
+    pub name: String,
+    pub id: GroupId
+}
+
+impl Default for GroupRef {
+    fn default() -> Self {
+        Self { name: String::new(), id: 0 }
     }
 }
 
@@ -122,7 +186,7 @@ impl Error for UserError {}
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct LoginRequest {
-    pub uid: u64,
+    pub uid: UserId,
     pub password: String,
     pub name: String,
     pub state: LoginReqState
@@ -141,7 +205,7 @@ pub enum ReturnNLoginReq {
     OK(UserInfo, String),
     UserNotFound,
     PasswordError,
-    UserCreateOK(u64),
+    UserCreateOK(UserId),
     ConversionBoostSuccessful,
     ConversionSendStreamSuccessful,
     ConversionBoostFail,

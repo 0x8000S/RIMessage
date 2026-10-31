@@ -1,4 +1,4 @@
-use Message::UserRef;
+use Message::{GroupRef, UserRef};
 use iced::widget;
 use crate::state::{RMessage::{self, UserCard}, UXD};
 
@@ -7,7 +7,9 @@ pub enum MUserCard {
     ChatWith(UserRef),
     AddFriend(u64),
     SureFriend(UserRef),
-    None(UserRef)
+    ReqFriendNone(UserRef),
+    ReqIntoGroupNone(UserRef),
+    SureGroup(GroupRef)
 }
 
 pub fn user_card(user: UserRef, friend: bool, uxd: &UXD) -> iced::Element<'_, RMessage> {
@@ -36,7 +38,25 @@ widget::row![
             widget::container(
                 widget::row![
                     widget::button("同意").on_press(RMessage::UserCard(MUserCard::SureFriend(userf.clone()))),
-                    widget::button("拒绝").style(widget::button::danger).on_press(UserCard(MUserCard::None(userf)))
+                    widget::button("拒绝").style(widget::button::danger).on_press(UserCard(MUserCard::ReqFriendNone(userf)))
+                ].spacing(uxd.content_space)
+            ).padding(uxd.view_padding).width(iced::Fill).align_x(iced::Right)
+            ].align_y(iced::Center),
+        ).width(iced::Fill).style(widget::container::rounded_box).into()
+}
+
+pub fn user_into_group_req(user: UserRef, gr: GroupRef, uxd: &UXD) -> iced::Element<'_, RMessage> {
+    let userf = user.clone();
+    widget::container(
+widget::row![
+            widget::column![
+                widget::text(format!("{}-邀请你加入群聊{}", user.name, gr.name)).size(uxd.subtile_font_size),
+                widget::text(format!("GID: {}", gr.id)),
+                ].spacing(uxd.content_space).padding(uxd.view_padding),
+            widget::container(
+                widget::row![
+                    widget::button("同意").on_press(RMessage::UserCard(MUserCard::SureGroup(gr.clone()))),
+                    widget::button("拒绝").style(widget::button::danger).on_press(UserCard(MUserCard::ReqIntoGroupNone(userf)))
                 ].spacing(uxd.content_space)
             ).padding(uxd.view_padding).width(iced::Fill).align_x(iced::Right)
             ].align_y(iced::Center),

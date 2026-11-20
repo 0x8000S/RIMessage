@@ -1,6 +1,6 @@
 use std::net::TcpStream;
 use iced::{widget, Theme, Task};
-use Message::{send_receive, LoginReqState, LoginRequest, ReturnNLoginReq, UserInfo};
+use Message::{LoginReqState, LoginRequest, ReturnNLoginReq, UserId, UserInfo, send_receive};
 use crate::popup::MPopupView;
 use crate::state::{RMessage, UXD};
 
@@ -75,7 +75,7 @@ impl LoginView {
         match msg {
             MLoginView::WhenUidType(u) => {
                 if self.state == ViewState::Login {
-                    if let Ok(_) = u.parse::<u64>() {
+                    if let Ok(_) = u.parse::<UserId>() {
                         self.uid = u;
                     } else {
                         if u.is_empty() {
@@ -110,7 +110,7 @@ impl LoginView {
     
     pub fn login(&mut self) -> iced::Task<RMessage> {
         dbg!(&self);
-        if let Err(_) = self.uid.parse::<u64>() {
+        if let Err(_) = self.uid.parse::<UserId>() {
             return Task::done(RMessage::PopupView(MPopupView::ShowTextPopupRedWithOk("错误".to_string(), "非法的格式!".to_string())))
         }
         let rl = LoginRequest {

@@ -5,7 +5,7 @@ use std::sync::{mpsc, Mutex, Arc};
 use std::thread;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use Message::{ChatMessage, GroupId, GroupRef, NPushStream, NReq, NReqSigle, NReturnReq, ReturnUser, TargetAddress, UserId, receive, send};
+use Message::{ChatMessage, FromAddress, GroupId, GroupRef, NPushStream, NReq, NReqSigle, NReturnReq, TargetAddress, UserId, receive, send};
 use crate::connect_instance::PushCIMessage::SystemReq;
 use crate::user::UserManagement;
 
@@ -115,8 +115,18 @@ impl OnlinePool {
                 }
                 CIMessage::Req(x) => match x {
                     ReqCIMessage::Send(s, t, c) => {
-                        if let TargetAddress::User(u) = t {
-                            self.send_push_msg(u, CIMessage::Push(PushCIMessage::Send(s, c)));
+                        match t {
+                            TargetAddress::User(u) => {
+                                self.send_push_msg(u, CIMessage::Push(PushCIMessage::Send(FromAddress::User(s), c)))
+                            }
+                            TargetAddress::Group(g) => {
+                                let ret = self.usm.lock().unwrap().get_group_member(g);
+                                if let Some(v) = ret {
+                                    for i in v {
+                                        self.send_push_msg(i, CIMessage::Push(PushCIMessage::Send(FromAddress::Group(g, s), c.clone())));
+                                    }
+                                }
+                            }
                         }
                     }
                     ReqCIMessage::ReqAddFriend(s, t) => {
@@ -157,7 +167,7 @@ pub enum PushCISystemReq {
 
 #[derive(Debug, Clone)]
 pub enum PushCIMessage {
-    Send(u64, ChatMessage),
+    Send(FromAddress, ChatMessage),
     ReqAddFriend(u64),
     ReqSureFriend(u64),
     ReqInviteGroup(u64, GroupRef),
@@ -276,14 +286,12 @@ impl ConnectInstance {
                     send(&mut tcp_stream, NReturnReq::GetAllUsers(usm.lock().unwrap().get_all_users()))
                 }
                 NReq::GetUserFromUid(u) => {
-                    match usm.lock().unwrap().find_user_ref(u) {
-                        Some(x) => send(&mut tcp_stream, NReturnReq::GetUserFromUid(
-                            ReturnUser::Ok(x.clone())
-                        )),
-                        None => send(&mut tcp_stream, NReturnReq::GetUserFromUid(
-                            ReturnUser::Error
-                        ))
-                    }
+                    send(&mut tcp_stream, 
+                        NReturnReq::GetUserFromUid(usm.lock().unwrap().find_user_ref(u))
+                    )
+                }
+                NReq::GetGroupFromId(g) => {
+                    send(&mut tcp_stream, NReturnReq::GetGroupFromId(usm.lock().unwrap().get_group(g)))
                 }
                 NReq::CreateGroup(n) => {
                     println!("User-{uid} created the group");
@@ -351,7 +359,6 @@ impl ObserverPool {
         }
     }
     pub fn watch(&mut self, online_pool: Arc<Mutex<OnlinePool>>) {
-        // dbg!(&self);
         while let Ok(m) = self.recv.try_recv() {
             let MOP::Boost(u) = m;
             println!("用户{u},升入在线池");

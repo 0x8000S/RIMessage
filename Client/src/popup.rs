@@ -1,4 +1,4 @@
-use iced::{widget, Task};
+use iced::{Task, Theme, widget};
 use crate::state::{RMessage, UXD};
 
 #[derive(Clone, Debug)]
@@ -137,4 +137,22 @@ impl BasePopup {
         };
         Task::none()
     }
+}
+
+pub fn base<'a>(w: impl Into<iced::Element<'a, RMessage>>, uxd: UXD) -> iced::Element<'a, RMessage> {
+    let uxdm = uxd.clone();
+    widget::container(
+        widget::center(
+            widget::container(
+                w
+                )
+            ).width(iced::Shrink).height(iced::Shrink)
+                .style(widget::container::bordered_box)
+        )
+        .style(move |_t: &Theme| widget::container::Style {
+            background: Some(iced::Background::Color(uxdm.clone().popup_mask_color)),
+            ..widget::container::Style::default()
+        })
+        .padding(uxd.view_padding)
+        .width(iced::Fill).height(iced::Fill).into()
 }

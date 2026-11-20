@@ -40,10 +40,7 @@ impl UserManagement {
     }
     pub fn find_user_ref(&self, uid: UserId) -> Option<UserRef> {
         if let Some(x) = self.user.iter().find(|x| x.uid == uid) {
-            Some(UserRef {
-                name: x.name.clone(),
-                uid: uid
-            })
+            Some(x.to_ref())
         } else {
             None
         }
@@ -65,10 +62,7 @@ impl UserManagement {
         }
     }
     pub fn get_all_user_ref(&mut self) -> Vec<UserRef> {
-        self.user.iter().map(|x| UserRef {
-            uid: x.uid,
-            name: x.name.clone()
-        }).collect()
+        self.user.iter().map(|x| x.to_ref()).collect()
     }
     pub fn create_group(&mut self, boss: UserId, name: String) -> GroupRef {
         if let Some(x) = self.user.iter_mut().find(|a| a.uid == boss) {
@@ -99,11 +93,13 @@ impl UserManagement {
     pub fn add_unit(&mut self, group: GroupId, unit: UserId) {
         if let Some(x) = self.group.iter_mut().find(|x| x.id == group) {
             if let Some(u) = self.user.iter_mut().find(|a| a.uid == unit) {
-                u.group.push(x.to_ref());
-                x.user.push(GroupUnit {
-                    user: u.to_ref(),
-                    permission: GroupPermission::Chat
-                });
+                u.add_group(x.to_ref());
+                if let None = x.user.iter().find(|z| z.user.uid == unit) {
+                    x.user.push(GroupUnit {
+                        user: u.to_ref(),
+                        permission: GroupPermission::Chat
+                    });
+                }
             }
         }
     }
@@ -126,6 +122,12 @@ impl UserManagement {
         if let Some(idx) = self.group.iter().position(|x| x.id == group) {
             self.group.remove(idx);
         }
+    }
+    pub fn get_group(&self, group: GroupId) -> Option<GroupHeader> {
+        if let Some(gr) = self.group.iter().find(|x| x.id == group) {
+            return Some(gr.clone())
+        }
+        None
     }
     pub fn get_group_ref(&self, group: GroupId) -> Option<GroupRef> {
         if let Some(gr) = self.group.iter().find(|x| x.id == group) {

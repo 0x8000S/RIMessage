@@ -12,14 +12,20 @@ pub enum TargetAddress {
     User(UserId),
     Group(GroupId)
 }
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum FromAddress {
+    User(UserId),
+    Group(GroupId, UserId)
+}
 
 #[derive(Deserialize, Serialize, Debug)]
 pub enum NPushStream {
-    Send(UserId, ChatMessage),
+    Send(FromAddress, ChatMessage),
     AddFriendReq(UserId),
     SureFriendReq(UserId),
     InviteGroupReq(UserId, GroupRef),
-    SureGroupReq(UserId, GroupId)
+    SureGroupReq(UserId, GroupId),
+    // IntoGroup(UserId, GroupId)
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -36,21 +42,22 @@ pub enum NReq {
     GetUserFromUid(UserId),
     GetAllUsers,
     Single(NReqSigle),
-    CreateGroup(String)
+    CreateGroup(String),
+    GetGroupFromId(GroupId)
 }
 
 
 #[derive(Deserialize, Serialize)]
 pub enum NReturnReq {
     GetAllUsers(Vec<UserInfo>),
-    GetUserFromUid(ReturnUser),
-    CreateGroup(GroupRef)
+    GetUserFromUid(Option<UserRef>),
+    CreateGroup(GroupRef),
+    GetGroupFromId(Option<GroupHeader>)
 }
 
-#[derive(Deserialize, Serialize)]
-pub enum ReturnUser {
-    Ok(UserRef),
-    Error
+pub trait GetFriendUid {
+    fn get_friend(&self) -> Vec<UserId>;
+    fn get_uid(&self) -> UserId;
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -79,8 +86,26 @@ impl UserInfo {
     pub fn to_ref(&self) -> UserRef {
         UserRef {
             name: self.name.clone(),
-            uid: self.uid
+            uid: self.uid,
+            friend: self.friend.clone().into_iter().map(|x| x.uid).collect()
         }
+    }
+    pub fn get_group(&self) -> Vec<GroupRef> {
+        self.group.clone()
+    }
+    pub fn add_group(&mut self, group_ref: GroupRef) {
+        if let None = self.group.iter().find(|x| x.id == group_ref.id) {
+            self.group.push(group_ref);
+        }
+    }
+}
+
+impl GetFriendUid for UserInfo {
+    fn get_friend(&self) -> Vec<UserId> {
+        self.friend.clone().into_iter().map(|x| x.uid).collect()
+    }
+    fn get_uid(&self) -> UserId {
+        self.uid
     }
 }
 
@@ -94,11 +119,12 @@ impl Default for UserInfo {
 pub struct UserRef {
     pub uid: UserId,
     pub name: String,
+    pub friend: Vec<UserId>
 }
 
 impl Default for UserRef {
     fn default() -> Self {
-        Self { uid: 0, name: "".to_string() }
+        Self { uid: 0, name: "".to_string(), friend: Vec::new() }
     }
 }
 
@@ -108,12 +134,22 @@ impl PartialEq for UserRef {
     }
 }
 impl Eq for UserRef {}
-
-pub fn is_friend(user: &UserInfo, other: UserId) -> bool {
-    for i in &user.friend {
-        if i.uid == other {
+impl GetFriendUid for UserRef {
+    fn get_friend(&self) -> Vec<UserId> {
+        self.friend.clone()
+    }
+    fn get_uid(&self) -> UserId {
+        self.uid
+    }
+}
+pub fn is_friend(user: &impl GetFriendUid, other: UserId) -> bool {
+    for i in &user.get_friend() {
+        if *i == other {
             return true;
         }
+    }
+    if user.get_uid() == other {
+        return true
     }
     false
 }
@@ -138,6 +174,11 @@ pub struct GroupHeader {
     pub user: Vec<GroupUnit>
 }
 
+impl Default for GroupHeader {
+    fn default() -> Self {
+        GroupHeader { id: 0, name: String::new(), user: Vec::new() }
+    }
+}
 
 impl GroupHeader {
     pub fn to_ref(&self) -> GroupRef {
@@ -152,6 +193,15 @@ impl GroupHeader {
 pub struct GroupUnit {
     pub user: UserRef,
     pub permission: GroupPermission
+}
+
+impl GroupUnit {
+    pub fn new(user: UserRef) -> Self {
+        Self {
+            user,
+            permission: GroupPermission::Chat
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, PartialOrd)]

@@ -1,6 +1,7 @@
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use iced;
-use iced::{widget, Task};
+use iced::widget;
 use iced::widget::stack;
 
 use crate::state::{View, RMessage, UXD};
@@ -52,16 +53,15 @@ impl RIMessage {
     }
     pub fn update(&mut self, msg: RMessage) -> iced::Task<RMessage> {
         match msg {
-            RMessage::Sync => {
-                self.main_view.sync();
-                Task::none()
-            }
             RMessage::LoginView(m) => self.login_view.update(m),
             RMessage::PopupView(m) => self.popup_view.update(m),
+            RMessage::Tick => {
+                self.main_view.tick()
+            },
             RMessage::Login(u) => {
                 self.view = View::Main;
                 self.main_view.req_stream = Some(self.login_view.login_stream.take().unwrap());
-                self.main_view.user = Some(u);
+                self.main_view.user = Arc::new(Mutex::new(Some(u)));
                 self.main_view.token = self.login_view.token.clone();
                 dbg!(&self.main_view);
                 self.main_view.try_connect_push_stream()
@@ -74,6 +74,6 @@ impl RIMessage {
         }
     }
     pub fn subscription(&self) -> iced::Subscription<RMessage> {
-        iced::time::every(Duration::from_millis(500)).map(|_| RMessage::Sync)
+        iced::time::every(Duration::from_millis(16)).map(|_| RMessage::Tick)
     }
 }

@@ -1,5 +1,5 @@
 use crate::{main_view::MMainView::{MSearchPage, SearchUser}, state::{RMessage, UXD}, user_card::user_card};
-use Message::{UserInfo, UserRef, is_friend};
+use Message::{UserId, UserInfo, UserRef, is_friend};
 use iced::{Task, widget};
 
 
@@ -46,7 +46,7 @@ impl SearchPage {
 	pub fn update(&mut self, msg: MMainSearchPage) -> Task<RMessage> {
 		match msg {
 			MMainSearchPage::WhenSearchBoxType(t) => {
-				if let Ok(_) = t.parse::<u64>() {
+				if let Ok(_) = t.parse::<UserId>() {
 					self.search_uid = t
 				} else {
 					if t.is_empty() {

@@ -1,6 +1,6 @@
 # RIMessage [开发中]
 
-当前进度: `R2.5开发中-群组聊天及管理功能`
+当前进度: `R2.8开发中-基本的群组聊天功能`
 
 为了方便您对整个项目的流程架构的有一个大体理解，我使用了 **DeepSeek** 生成了以下图表来辅助理解
 
@@ -11,107 +11,169 @@
 ```mermaid
 flowchart TB
     subgraph Client["客户端 (Iced)"]
-        LV[LoginView<br/>登录/注册]
-        MV[MainView<br/>主界面]
-        PP[BasePopup<br/>弹窗队列]
+        LV[LoginView<br/>登录 / 注册]
+        MV[MainView<br/>主界面 · 页面路由]
+        CW[ChatWith<br/>单聊 / 群聊]
+        US[UserSelect<br/>成员选择]
         UC[UserCard<br/>用户卡片]
+        PP[BasePopup<br/>弹窗队列]
     end
 
     subgraph Proto["Message crate (共享协议)"]
         LR[LoginRequest<br/>LoginReqState]
         RR[ReturnNLoginReq]
-        NR[NReq]
-        NR2[NReturnReq]
-        UI[UserInfo]
+        NR[NReq / NReqSigle<br/>请求]
+        NR2[NReturnReq<br/>应答]
+        NP[NPushStream<br/>推送]
+        TA[TargetAddress / FromAddress<br/>发给谁 · 从哪来]
+        UI[UserInfo / UserRef<br/>ChatMessage]
+        GI[GroupHeader / GroupUnit<br/>GroupRef / GroupPermission]
     end
 
     subgraph Server["服务端 (多线程)"]
-        LSN[TcpListener]
-        FA[handling_request<br/>ServerFA]
+        LSN[TcpListener<br/>handling_request]
         OBP[ObserverPool<br/>过渡态]
-        ONP[OnlinePool<br/>终态]
-        CI[ConnectInstance<br/>读写线程]
+        ONP[OnlinePool<br/>终态 · 消息路由]
+        USM[UserManagement<br/>用户 · 好友 · 群组]
+        CI[ConnectInstance<br/>req / push / work 线程]
     end
 
-    LV -->|SignUp/Login| LSN
+    LV -->|SignUp / Login| LSN
     MV -->|ConversionBoost<br/>ConversionSendStream| LSN
-    MV -->|NReq 业务请求| CI
-    LSN --> FA
-    FA --> OBP
-    OBP -->|watch 迁移| ONP
-    ONP --> CI
+    MV -->|NReq| CI
     CI -->|NReturnReq| MV
+    ONP -->|NPushStream| MV
+    LSN --> OBP
+    OBP -->|watch 迁移| ONP
+    ONP <--> CI
+    ONP <--> USM
+    CW -.单聊 / 群聊.-> MV
+    US -.选择成员.-> MV
+    UC -.渲染.-> MV
     PP -.叠加.-> LV
     PP -.叠加.-> MV
-    UC -.渲染.-> MV
 ```
 
-**解释**：客户端和服务端通过 `Message` crate 里定义的协议通信。客户端的 `LoginView` 负责注册和登录，`MainView` 负责后续的业务交互。服务端从 `TcpListener` 接连接，分派给 `handling_request` 处理握手，握手完成后进入 `ObserverPool`，配对成功后迁移到 `OnlinePool`，由 `ConnectInstance` 的工作线程负责日常读写。
+**解释**：客户端和服务端通过 `Message` crate 里定义的协议通信。
+
+客户端按页面拆分：`LoginView` 负责注册与登录，`MainView` 负责登录后的页面路由与业务请求，`ChatWith` 负责单聊和群聊两个页面，`UserSelect` 是建群时的成员选择弹窗。
+
+服务端从 `TcpListener` 接连接，交给 `handling_request` 处理握手；握手完成后连接进入 `ObserverPool`，配对成功再由 `watch()` 迁移到 `OnlinePool`，由 `ConnectInstance` 的三个工作线程负责日常读写。
+
+**群组数据与好友数据一起保存在 `UserManagement` 里**（`group: Vec<GroupHeader>`），群消息由 `OnlinePool` 负责按成员分发——这部分在 [第 11 节](#11-群组消息分发-fan-out) 展开。
 
 ---
 
 ## 2. 协议定义
 
+协议分成三条轨道，外加两个「地址」类型。
+
 ```mermaid
 classDiagram
-    class LoginRequest {
-        +u64 uid
-        +String password
-        +String name
-        +LoginReqState state
-    }
-
-    class LoginReqState {
-        <<enum>>
-        SignUp
-        Login
-        ConversionBoost
-        ConversionSendStream(String)
-    }
-
-    class ReturnNLoginReq {
-        <<enum>>
-        OK(UserInfo, String)
-        UserNotFound
-        PasswordError
-        UserCreateOK(u64)
-        ConversionBoostSuccessful
-        ConversionSendStreamSuccessful
-        ConversionBoostFail
-        ConversionSendStreamFail
-    }
-
     class NReq {
         <<enum>>
-        GetUserFromUid(u64)
         GetAllUsers
+        GetUserFromUid(UserId)
+        CreateGroup(String)
+        GetGroupFromId(GroupId)
+        Single(NReqSigle)
+    }
+
+    class NReqSigle {
+        <<enum>>
+        Send(TargetAddress, ChatMessage)
+        AddFriendReq(UserId)
+        SureFriendReq(UserId)
+        InviteGroupReq(UserId, GroupId)
+        SureGroupReq(GroupId)
     }
 
     class NReturnReq {
         <<enum>>
-        GetAllUsers(Vec~UserInfo~)
-        GetUserFromUid(ReturnUser)
+        GetAllUsers(Vec)
+        GetUserFromUid(Option)
+        CreateGroup(GroupRef)
+        GetGroupFromId(Option)
+    }
+
+    class NPushStream {
+        <<enum>>
+        Send(FromAddress, ChatMessage)
+        AddFriendReq(UserId)
+        SureFriendReq(UserId)
+        InviteGroupReq(UserId, GroupRef)
+        SureGroupReq(UserId, GroupId)
+    }
+
+    class TargetAddress {
+        <<enum>>
+        User(UserId)
+        Group(GroupId)
+    }
+
+    class FromAddress {
+        <<enum>>
+        User(UserId)
+        Group(GroupId, UserId)
+    }
+
+    class ChatMessage {
+        +UserRef sender
+        +String message
+    }
+
+    class GroupHeader {
+        +GroupId id
+        +String name
+        +Vec user
+    }
+
+    class GroupUnit {
+        +UserRef user
+        +GroupPermission permission
+    }
+
+    class GroupPermission {
+        <<enum>>
+        Chat
+        Administrator
+        All
     }
 
     class UserInfo {
-        +u64 uid
+        +UserId uid
         +String name
-        +Vec~u64~ friend
+        +Vec friend
         +String password
+        +Vec group
     }
 
-    LoginRequest --> LoginReqState
-    ReturnNLoginReq --> UserInfo
-    NReturnReq --> UserInfo
-    NReturnReq --> ReturnUser
+    NReq --> NReqSigle
+    NReqSigle --> TargetAddress
+    NReqSigle --> ChatMessage
+    NPushStream --> FromAddress
+    NPushStream --> ChatMessage
+    GroupHeader --> GroupUnit
+    GroupUnit --> GroupPermission
+    UserInfo --> GroupRef
 ```
 
-**解释**：协议分成两条独立的“轨道”。
+**解释**：三条轨道各管一件事。
 
-- **登录轨道**：`LoginRequest` + `ReturnNLoginReq`。所有“建立连接身份”的动作（注册、登录、升级事务流、注册推送流）都走这一条。
-- **业务轨道**：`NReq` + `NReturnReq`。只有连接身份确立之后的日常请求才走这一条，比如拉取用户列表、查某个用户。
+- **登录轨道**：`LoginRequest` + `ReturnNLoginReq`。注册、登录、升级请求流、注册推送流，全部走这条，用完即结束。
+- **业务轨道**：`NReq` + `NReturnReq`。连接身份确立后的日常请求，一问一答。`NReq::Single(NReqSigle)` 是大多数操作（发消息、加好友、建群、邀请）的统一入口。
+- **推送轨道**：`NPushStream`。**只有服务端能发**，客户端被动接收。好友申请、群邀请、聊天消息都从这里下来。
 
-两条轨道分离的好处是：登录轨道处理完就结束，不用长期维护；业务轨道可以反复调用，不掺和认证逻辑。
+两个地址类型是群组功能加进来的关键：
+
+| 类型              | 用在哪           | 回答的问题                                            |
+| ----------------- | ---------------- | ----------------------------------------------------- |
+| `TargetAddress` | 客户端 → 服务端 | 这条消息**发给谁**（某个人 / 某个群）           |
+| `FromAddress`   | 服务端 → 客户端 | 这条消息**从哪来**（某人私聊 / 某个群里的某人） |
+
+`FromAddress::Group(group_id, sender_uid)` 一次带两个信息：**哪个群** + **谁说的**。客户端据此把消息放进对应的会话记录里——私聊按 uid 归档，群聊按群 id 归档。
+
+群权限用枚举而不是两个布尔字段，是为了让「是群主但不是管理员」这种状态**在类型层面就不存在**。
 
 ---
 
@@ -357,71 +419,155 @@ flowchart LR
     subgraph RMsg[RMessage]
         LV[LoginView<br/>MLoginView]
         MV[MainView<br/>MMainView]
-        PV[PopupView<br/>MPopupView]
+        CW[ChatWith<br/>MMainChat]
+        RQ[ReqFriendPage<br/>MReqFriendPage]
+        SP[SearchPage<br/>MMainSearchPage]
         UV[UserCard<br/>MUserCard]
+        PV[PopupView<br/>MPopupView]
     end
 
     APP[RIMessage::update] -->|转发| LV
     APP -->|转发| MV
-    APP -->|转发| PV
     APP -->|转发| UV
+    APP -->|转发| PV
+    MV -->|转发| CW
+    MV -->|转发| RQ
+    MV -->|转发| SP
 
     LV -.登录成功.-> APP
     APP -.切换 View::Main.-> MV
     MV -.弹窗.-> PV
-    UV -.加好友/聊天.-> MV
+    UV -.加好友 / 聊天.-> MV
+    CW -.发送消息.-> MV
 ```
 
 **解释**：客户端用**嵌套消息**做组件间通信。
 
-`RMessage` 是顶层枚举，每个变体装着一个子组件的消息枚举（`MLoginView`、`MMainView`、`MPopupView`、`MUserCard`）。`RIMessage::update` 本身不做业务，只做转发——把消息分派给对应的子组件。
+`RMessage` 是顶层枚举，每个变体装着一个子组件的消息枚举。`RIMessage::update` 本身不做业务，只做转发——`MainView` 再把消息二次转发给 `ChatWith`、`ReqFriendPage` 等子页面。
 
-子组件之间不直接通信，全部通过上层 `RIMessage` 中转。比如 `LoginView` 登录成功后，返回 `RMessage::Login(UserInfo)`，由 `RIMessage` 处理“切换视图 + 移交连接”。`MainView` 想弹窗，返回 `RMessage::PopupView(...)`，由 `RIMessage` 转发给 `BasePopup`。
+**群聊页面 `ChatWith` 有两套状态**：`talk_user` 管单聊，`talk_group` 管群聊。输入框、发送按钮、滚动区都各有一套。
 
-这样每个子组件只需要知道自己内部的逻辑，不需要知道别的组件怎么工作。加新组件时，只需要在 `RMessage` 里加一个变体 + 在 `update` 里加一行转发。
+**唯一的例外是 `talk_group`**：它是 `Arc<Mutex<GroupHeader>>`，同时被 UI 线程和推送线程持有。
+
+- UI 线程：每次渲染前读一次（拿群名、成员列表、聊天记录的 key）
+- 推送线程：收到 `SureGroupReq` 后，**如果当前打开的就是这个群**，直接覆盖它
+
+这样就避免了「成员列表是打开群那一刻的快照」——有人入群时，界面会自动刷新，不需要重新点开群。
 
 ---
 
-## 10. 完整系统数据流
+## 10. 完整系统数据流（含群组）
 
 ```mermaid
 flowchart TB
     subgraph C[客户端进程]
         UI[Iced UI]
-        LVS[LoginView 内部 TcpStream]
+        LVS[LoginView 临时流]
         MVR[MainView req_stream]
         MVP[MainView push_stream]
+        RD[RecordManagement<br/>私聊 / 群聊记录]
+        TG[Arc Mutex GroupHeader<br/>当前群快照]
     end
 
     subgraph S[服务端进程]
         LIS[TcpListener]
         OB[ObserverPool]
-        ON[OnlinePool]
-        CI[ConnectInstance]
-        US[UserManagement]
+        ON[OnlinePool<br/>message_stream 路由]
+        CI[ConnectInstance<br/>req / push / work]
+        US[UserManagement<br/>用户 好友 群组]
+        OF[OfflineMessagePool]
     end
 
-    UI -->|SignUp/Login| LVS
+    UI -->|SignUp / Login| LVS
     LVS -->|ConversionBoost| LIS
     LIS --> OB
     MVR -->|ConversionSendStream| LIS
-    LIS --> OB
-
     OB -->|watch 迁移| ON
     ON --> CI
 
     MVR -->|NReq| CI
     CI -->|NReturnReq| MVR
-    CI --> US
-    MVP -.等待推送.- CI
+
+    CI -->|CIMessage::Req| ON
+    ON -->|按地址分发| ON
+    ON -->|NPushStream| MVP
+    ON -->|目标不在线| OF
+    OF -->|上线补发| ON
+
+    ON --> US
+    MVP --> RD
+    MVP --> TG
 ```
 
-**解释**：这是整张系统的全景图。
+**解释**：这是整张系统的全景图，和早期版本相比有三处变化。
 
-客户端有三条 `TcpStream`：`LoginView` 的临时流（升级为 `MainView` 的 `req_stream`），和 `MainView` 新开的 `push_stream`。
+**一、推送流已经通了。** 早期 `push_stream` 只是「待命」的入口，现在服务端的 `OnlinePool` 会主动往里面写：好友申请、群邀请、聊天消息全部走这条路。
 
-服务端有两个池子：`ObserverPool` 是过渡态，`OnlinePool` 是终态。`watch()` 负责把前者迁到后者。
+**二、消息路由收敛到 `OnlinePool::message_stream()`。** 客户端的请求先经过 `req_thread`，转成内部消息 `CIMessage::Req` 送进通道；`message_stream` 从通道取出来，按 `TargetAddress` 决定推给谁：
 
-`ConnectInstance` 是业务核心，它同时持有 `req_stream`、`push_stream`、`usm`。目前只有 `req_stream` 被 `req_thread` 消费，`push_stream` 还处于待命状态——它是下一步实现“服务端主动推送”时的入口。
+- `User(u)`：推给单个人
+- `Group(g)`：查群成员列表，推给每一个人
 
-`push_stream` 的“等待推送”这条虚线是还没实现的部分：等好友系统、消息路由做出来之后，`ConnectInstance` 会从别的用户那里接收推送消息，然后写进 `push_stream` 发给目标客户端。
+**三、离线池对所有消息生效。** 不管私聊还是群聊，只要目标用户不在线，消息就落进 `OfflineMessagePool`，等他下次登录时补发。
+
+**客户端侧**：收到的推送按 `FromAddress` 分拣——私聊进 `RecordManagement.tap`（按 uid 归档），群聊进 `RecordManagement.group`（按群 id 归档）；如果收到的群消息正好是当前打开的群，还会顺带更新 `talk_group`。
+
+---
+
+## 11. 群组消息分发（fan-out）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as 客户端 A（发送方）
+    participant RT as A 的 req_thread
+    participant MS as OnlinePool<br/>message_stream
+    participant UM as UserManagement
+    participant B as 客户端 B（群成员）
+    participant C as 客户端 C（群成员）
+
+    A->>RT: NReq::Single(Send(Group(g), msg))
+    RT->>RT: 转成 CIMessage::Req(Send(A, Group(g), msg))
+    RT->>MS: 送入事件通道
+
+    MS->>UM: get_group_member(g)
+    UM-->>MS: [A, B, C]
+
+    loop 对每个成员
+        MS->>MS: send_push_msg(成员, Push(Send(FromAddress::Group(g, A), msg)))
+    end
+
+    MS-->>A: NPushStream::Send(Group(g, A), msg)
+    MS-->>B: NPushStream::Send(Group(g, A), msg)
+    MS-->>C: NPushStream::Send(Group(g, A), msg)
+
+    Note over B: 若 B 不在线<br/>消息进入离线池
+```
+
+**解释**：群消息比私聊多一步「查成员」，其余完全复用同一条投递链路。
+
+**发送方自己也会收到一条回显。** 这是刻意的设计：客户端在发送时**不往本地记录里预插**，一律等服务端推回来再显示。好处是「本地状态」只有一个来源，不会出现「本地加了一条、服务端又推一条」的重复；代价是发送到显示之间多了一次往返（本机测试里约十几毫秒）。
+
+**入群流程**是另一条链路：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as 邀请人
+    participant S as 服务端
+    participant B as 被邀请人
+
+    A->>S: InviteGroupReq(B, gid)
+    S->>B: Push(InviteGroupReq(A, GroupRef))
+    B->>B: 弹出入群申请卡片
+    B->>S: SureGroupReq(gid)
+    S->>S: add_unit(gid, B)<br/>（已在群里则跳过）
+    S->>A: Push(SureGroupReq(B, gid))
+    S->>B: Push(SureGroupReq(B, gid))
+    A->>S: GetGroupFromId(gid) → 刷新成员列表
+    B->>S: GetGroupFromId(gid) → 加入自己的群列表
+```
+
+**`add_unit` 与 `add_group` 都做了去重**（按 uid / 按群 id），所以重复点击「同意」不会产生两个成员。
+
+**还没做的部分**：退群、解散群、群内权限校验（目前任何成员都能邀请别人）、群消息自动滚动。

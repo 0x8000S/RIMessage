@@ -1,50 +1,24 @@
-use std::{collections::HashMap};
+use std::sync::{Arc, Mutex};
 
-use Message::{UserRef, ChatMessage};
+use Message::{ChatMessage, GroupHeader, TargetAddress, UserRef, is_friend};
 use iced::{Task, widget};
-
 use crate::state::{RMessage, UXD};
+use crate::user_card::{RecordManagement, chat_text, user_card};
+
 
 #[derive(Clone, Debug)]
 pub enum MMainChat {
-	WhenMessageType(String),
-	Send(u64, String)
-}
-
-
-#[derive(Debug)]
-pub struct RecordManagement {
-	tap: HashMap<u64, Vec<ChatMessage>>,
-	space: Vec<ChatMessage>
-}
-
-impl RecordManagement {
-	fn new() -> Self {
-		Self { 
-			tap: HashMap::new(),
-			space: Vec::new()
-		}
-	}
-	pub fn push_message(&mut self, uid: u64, message: ChatMessage) {
-		match self.tap.get_mut(&uid) {
-			Some(x) => x.push(message),
-			None => {self.tap.insert(uid, vec![message]);}
-		};
-	}
-	fn get_chat(&self, uid: u64) -> &Vec<ChatMessage> {
-		match self.tap.get(&uid) {
-			Some(x) => x,
-			None => &self.space
-		}
-	}
+	WhenChatMessageType(String),
+	WhenGroupMessageType(String),
+	Send(TargetAddress, String)
 }
 
 #[derive(Debug)]
 pub struct ChatWith {
-	message: String,
-	pub record: RecordManagement,
-	// management: RecordManagement,
-	other: UserRef,
+	chat_message: String,
+	group_message: String,
+	pub talk_user: UserRef,
+	pub talk_group: Arc<Mutex<GroupHeader>>,
 	pub yo: UserRef,
 	uxd: UXD
 }
@@ -52,49 +26,46 @@ pub struct ChatWith {
 impl ChatWith {
 	pub fn new(uxd: UXD) -> Self {
 		Self {
-			message: String::new(),
-			record: RecordManagement::new(),
-			other: UserRef::default(),
+			chat_message: String::new(),
+			group_message: String::new(),
+			talk_user: UserRef::default(),
+			talk_group: Arc::new(Mutex::new(GroupHeader::default())),
 			yo: UserRef::default(),
 			uxd
 		}
 	}
 	pub fn change_user(&mut self, other: UserRef) {
-		self.other = other;
-
+		self.talk_user = other;
 	}
-	pub fn view(&self) -> iced::Element<'_, RMessage> {
+	pub fn change_group(&mut self, other: GroupHeader) {
+		*self.talk_group.lock().unwrap() = other;
+	}
+	pub fn chat_view(&self, record: &RecordManagement) -> iced::Element<'_, RMessage> {
 		let mut msg = Vec::new();
-		let smsg = self.record.get_chat(self.other.uid);
+		let smsg = record.get_chat(self.talk_user.uid);
 		for m in smsg {
-			if m.sender.uid == self.yo.uid {
-				msg.push(widget::text(m.clone().to_string()).style(widget::text::primary).into());
-			} else {
-				msg.push(widget::text(m.clone().to_string()).into());
-			}
+			msg.push(chat_text(m.clone(), m.sender.uid == self.yo.uid, &self.uxd));
 		}
 		widget::column![
-			widget::text(self.other.name.clone()).size(self.uxd.subtile_font_size),
+			widget::text(self.talk_user.name.clone()).size(self.uxd.subtile_font_size),
 			widget::scrollable(
 				widget::column(
 					msg
-				),
-			).height(iced::Fill),
+				).spacing(self.uxd.content_space).padding(self.uxd.view_padding),
+			).id("ChatScrView").height(iced::Fill),
 			widget::row![
-				widget::text_input("键入消息", &self.message).on_input(|x| RMessage::MainView(crate::main_view::MMainView::MainChat(MMainChat::WhenMessageType(x)))).on_submit(RMessage::MainView(crate::main_view::MMainView::MainChat(MMainChat::Send(self.other.uid, self.message.clone())))),
-				widget::button("发送").on_press(RMessage::MainView(crate::main_view::MMainView::MainChat(MMainChat::Send(self.other.uid, self.message.clone()))))
+				widget::text_input("键入消息", &self.chat_message).on_input(|x| RMessage::MainView(crate::main_view::MMainView::MainChat(MMainChat::WhenChatMessageType(x)))).on_submit(RMessage::MainView(crate::main_view::MMainView::MainChat(MMainChat::Send(TargetAddress::User(self.talk_user.uid), self.chat_message.clone())))),
+				widget::button("发送").on_press(RMessage::MainView(crate::main_view::MMainView::MainChat(MMainChat::Send(TargetAddress::User(self.talk_user.uid), self.chat_message.clone()))))
 			].spacing(self.uxd.content_space)
 		].padding(self.uxd.view_padding).into()
 	}
 	pub fn update(&mut self, msg: MMainChat) -> Task<RMessage> {
 		match msg {
-			MMainChat::WhenMessageType(s) => self.message = s,
+			MMainChat::WhenChatMessageType(s) => self.chat_message = s,
+			MMainChat::WhenGroupMessageType(s) => self.group_message = s,
 			MMainChat::Send(t, m) => {
-				self.record.push_message(t, ChatMessage {
-						sender: self.yo.clone(),
-						message: m.clone()
-					});
-				self.message.clear();
+				self.chat_message.clear();
+				self.group_message.clear();
 				return Task::done(
 					RMessage::MainView(crate::main_view::MMainView::Send(t, ChatMessage {
 						sender: self.yo.clone(),
@@ -105,5 +76,40 @@ impl ChatWith {
 			}
 		}
 		Task::none()
+	}
+	pub fn group_view(&self, record: &RecordManagement) -> iced::Element<'_, RMessage> {
+		let mut msg = Vec::new();
+		let id = self.talk_group.lock().unwrap().id;
+		let user = self.talk_group.lock().unwrap().user.clone();
+		let name = self.talk_group.lock().unwrap().name.clone();
+		let smsg = record.get_group_chat(id);
+		for m in smsg {
+			msg.push(chat_text(m.clone(), m.sender.uid == self.yo.uid, &self.uxd));
+		}
+		let mut gucard = Vec::new();
+		for i in &user {
+			gucard.push(user_card(i.clone().user, is_friend(&self.yo, i.clone().user.uid), &self.uxd));
+		}
+		widget::row![
+			widget::column![
+				widget::text(name).size(self.uxd.subtile_font_size),
+				widget::scrollable(
+					widget::column(
+						msg
+					).spacing(self.uxd.content_space).padding(self.uxd.view_padding),
+				).id("ChatScrView").height(iced::Fill),
+				widget::row![
+					widget::text_input("键入消息", &self.group_message).on_input(|x| RMessage::MainView(crate::main_view::MMainView::MainChat(MMainChat::WhenGroupMessageType(x)))).on_submit(RMessage::MainView(crate::main_view::MMainView::MainChat(MMainChat::Send(TargetAddress::Group(id), self.group_message.clone())))),
+					widget::button("发送").on_press(RMessage::MainView(crate::main_view::MMainView::MainChat(MMainChat::Send(TargetAddress::Group(id), self.group_message.clone()))))
+				].spacing(self.uxd.content_space)
+			].width(iced::FillPortion(3)),
+			widget::column![
+				widget::scrollable(widget::column(gucard)).height(iced::Fill),
+				widget::button("添加新成员").width(iced::Fill).on_press(RMessage::MainView(crate::main_view::MMainView::ShowSelectUserMessageBox))
+			].width(iced::FillPortion(1))
+		].padding(self.uxd.view_padding).spacing(self.uxd.content_space).into()
+	}
+	pub fn chat_slide_down(&mut self) -> Task<RMessage> {
+		iced::widget::operation::snap_to_end("ChatScrView")
 	}
 }

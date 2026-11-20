@@ -9,7 +9,7 @@ use crate::user_card::MUserCard;
 pub enum RMessage {
     LoginView(MLoginView),
     PopupView(MPopupView),
-    Sync,
+    Tick,
     Login(UserInfo),
     MainView(MMainView),
     Exit,

@@ -57,7 +57,7 @@ impl Server {
                 // println!("START CLEAR");
                 oplcc.lock().unwrap().message_stream();
                 // println!("FINAL CLEAR");
-                // sleep(Duration::from_secs(1));
+                sleep(Duration::from_millis(1));
             }
         });
         for i in self.tcp_listener.incoming() {

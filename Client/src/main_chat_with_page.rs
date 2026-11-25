@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use Message::{ChatMessage, GroupHeader, TargetAddress, UserRef, is_friend};
+use Message::{ChatMessage, GroupHeader, TargetAddress, UserId, UserInfo, UserRef, is_friend};
 use iced::{Task, widget};
 use crate::state::{RMessage, UXD};
 use crate::user_card::{RecordManagement, chat_text, user_card};
@@ -19,8 +19,9 @@ pub struct ChatWith {
 	group_message: String,
 	pub talk_user: UserRef,
 	pub talk_group: Arc<Mutex<GroupHeader>>,
-	pub yo: UserRef,
-	uxd: UXD
+	yo: Arc<Mutex<UserInfo>>,
+	uxd: UXD,
+	uid: UserId
 }
 
 impl ChatWith {
@@ -30,8 +31,9 @@ impl ChatWith {
 			group_message: String::new(),
 			talk_user: UserRef::default(),
 			talk_group: Arc::new(Mutex::new(GroupHeader::default())),
-			yo: UserRef::default(),
-			uxd
+			yo: Arc::new(Mutex::new(UserInfo::default())),
+			uxd,
+			uid: 0
 		}
 	}
 	pub fn change_user(&mut self, other: UserRef) {
@@ -40,11 +42,15 @@ impl ChatWith {
 	pub fn change_group(&mut self, other: GroupHeader) {
 		*self.talk_group.lock().unwrap() = other;
 	}
+	pub fn take_user(&mut self, user: Arc<Mutex<UserInfo>>) {
+		self.yo = user;
+		self.uid = self.yo.lock().unwrap().uid;
+	}
 	pub fn chat_view(&self, record: &RecordManagement) -> iced::Element<'_, RMessage> {
 		let mut msg = Vec::new();
 		let smsg = record.get_chat(self.talk_user.uid);
 		for m in smsg {
-			msg.push(chat_text(m.clone(), m.sender.uid == self.yo.uid, &self.uxd));
+			msg.push(chat_text(m.clone(), m.sender.uid == self.uid, &self.uxd));
 		}
 		widget::column![
 			widget::text(self.talk_user.name.clone()).size(self.uxd.subtile_font_size),
@@ -68,7 +74,7 @@ impl ChatWith {
 				self.group_message.clear();
 				return Task::done(
 					RMessage::MainView(crate::main_view::MMainView::Send(t, ChatMessage {
-						sender: self.yo.clone(),
+						sender: self.yo.lock().unwrap().clone().to_ref(),
 						message: m
 					}
 				))
@@ -84,11 +90,11 @@ impl ChatWith {
 		let name = self.talk_group.lock().unwrap().name.clone();
 		let smsg = record.get_group_chat(id);
 		for m in smsg {
-			msg.push(chat_text(m.clone(), m.sender.uid == self.yo.uid, &self.uxd));
+			msg.push(chat_text(m.clone(), m.sender.uid == self.uid, &self.uxd));
 		}
 		let mut gucard = Vec::new();
 		for i in &user {
-			gucard.push(user_card(i.clone().user, is_friend(&self.yo, i.clone().user.uid), &self.uxd));
+			gucard.push(user_card(i.clone().user, is_friend(&self.yo.lock().unwrap().clone(), i.clone().user.uid), &self.uxd));
 		}
 		widget::row![
 			widget::column![
@@ -104,7 +110,9 @@ impl ChatWith {
 				].spacing(self.uxd.content_space)
 			].width(iced::FillPortion(3)),
 			widget::column![
-				widget::scrollable(widget::column(gucard)).height(iced::Fill),
+				widget::scrollable(
+					widget::column(gucard).spacing(self.uxd.content_space)
+				).height(iced::Fill),
 				widget::button("添加新成员").width(iced::Fill).on_press(RMessage::MainView(crate::main_view::MMainView::ShowSelectUserMessageBox))
 			].width(iced::FillPortion(1))
 		].padding(self.uxd.view_padding).spacing(self.uxd.content_space).into()

@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use crate::{main_view::MMainView::{MSearchPage, SearchUser}, state::{RMessage, UXD}, user_card::user_card};
 use Message::{UserId, UserInfo, UserRef, is_friend};
 use iced::{Task, widget};
@@ -13,7 +15,7 @@ pub enum MMainSearchPage {
 pub struct SearchPage {
 	search_uid: String,
 	pub search_card: Vec<UserRef>,
-	pub user_info: UserInfo,
+	pub user_info: Arc<Mutex<UserInfo>>,
 	uxd: UXD
 }
 
@@ -22,14 +24,14 @@ impl SearchPage {
 		Self {
 			search_uid: String::new(),
 			search_card: Vec::new(),
-			user_info: user_info,
+			user_info: Arc::new(Mutex::new(user_info)),
 			uxd: uxd
 		}
 	}
 	pub fn view(&self) -> iced::Element<'_, RMessage> {
         let mut test = vec![];
         for ur in &self.search_card {
-            test.push(user_card(ur.clone(), is_friend(&self.user_info, self.search_uid.parse().unwrap_or_else(|_| 0)), &self.uxd));
+            test.push(user_card(ur.clone(), is_friend(&*self.user_info.lock().unwrap(), self.search_uid.parse().unwrap_or_else(|_| 0)), &self.uxd));
         }
         widget::column![
             widget::row![

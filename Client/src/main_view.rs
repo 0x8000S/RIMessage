@@ -66,7 +66,7 @@ pub struct MainView {
     pub req_stream: Option<TcpStream>,
     pub push_stream: Option<TcpStream>,
     pub push_reader: Option<BufReader<TcpStream>>,
-    pub user: Arc<Mutex<Option<UserInfo>>>,
+    pub user: Option<Arc<Mutex<UserInfo>>>,
     pub token: String,
     pub uxd: UXD,
     data_union: Arc<DataUnion>,
@@ -111,7 +111,7 @@ impl MainView {
             req_stream: None,
             push_stream: None,
             push_reader: None,
-            user: Arc::new(Mutex::new(None)),
+            user: None,
             token: String::new(),
             uxd: uxd.clone(),
             tab_view: tab,
@@ -141,9 +141,9 @@ impl MainView {
         ].spacing(self.uxd.content_space).padding(self.uxd.view_padding), self.uxd.clone())
     }
     fn chat_page(&self) -> iced::Element<'_, RMessage> {
-        if let Some(u) = &*self.user.lock().unwrap() {
+        if let Some(u) = &self.user {
             let mut names = vec![];
-            for i in &u.get_friend() {
+            for i in &u.lock().unwrap().get_friend() {
                 names.push(widget::button(widget::text(i.name.clone()).size(self.uxd.title_font_size).wrapping(widget::text::Wrapping::WordOrGlyph)).on_press(RMessage::MainView(MMainView::GoPage(Page::ChatWith(i.clone())))).into());
             }
             widget::grid(names)
@@ -155,9 +155,9 @@ impl MainView {
         }
     }
     fn group_page(&self) -> iced::Element<'_, RMessage> {
-        if let Some(u) = &*self.user.lock().unwrap() {
+        if let Some(u) = &self.user {
             let mut names = vec![];
-            for i in &u.get_group() {
+            for i in &u.lock().unwrap().get_group() {
                 names.push(widget::button(widget::text(i.name.clone()).size(self.uxd.title_font_size).wrapping(widget::text::Wrapping::WordOrGlyph)).on_press(RMessage::MainView(MMainView::GoPage(Page::GroupWith(i.clone())))).into());
             }
             widget::column![
@@ -258,8 +258,8 @@ impl MainView {
                     let ret = send_receive(tcp, NReq::CreateGroup(self.group_name.clone()));
                     let ret: NReturnReq = serde_json::from_str(ret.as_str()).unwrap();
                     if let NReturnReq::CreateGroup(x) = ret {
-                        if let Some(u) =&mut  *self.user.clone().lock().unwrap() {
-                            u.add_group(x);
+                        if let Some(u) = &self.user {
+                            u.lock().unwrap().add_group(x);
                         }
                     }
                     return Task::done(RMessage::MainView(MMainView::SwitchCreateGroupMsgState(false)))
@@ -277,8 +277,8 @@ impl MainView {
             }
             MMainView::MUserSelect(m) => self.user_select_popup.update(m),
             MMainView::ShowSelectUserMessageBox => {
-                if let Some(user) = &*self.user.lock().unwrap() {
-                    self.user_select_popup.user = user.clone();
+                if let Some(user) = &self.user {
+                    self.user_select_popup.user = user.lock().unwrap().clone();
                 }
                 self.user_select_popup.show = true;
                 self.user_select_popup.set_callback(RMessage::MainView(MMainView::WhenSelectUserDone));
@@ -295,7 +295,7 @@ impl MainView {
     pub fn try_connect_push_stream(&mut self) -> Task<RMessage> {
         let mut push_stream = TcpStream::connect("127.0.0.1:7878").unwrap();
         let msg = LoginRequest {
-            uid: self.user.clone().as_ref().lock().unwrap().as_ref().unwrap().uid,
+            uid: self.user.clone().unwrap().lock().unwrap().uid,
             password: String::new(),
             name: String::new(),
             state: LoginReqState::ConversionSendStream(self.token.clone())
@@ -351,8 +351,8 @@ impl MainView {
             }
             MUserCard::SureFriend(u) => {
                 if let Some(rs) = &mut self.req_stream {
-                    if let Some(user_info) = &mut *self.user.clone().lock().unwrap() {
-                        user_info.add_friend(u.clone());
+                    if let Some(user_info) = &self.user {
+                        user_info.lock().unwrap().add_friend(u.clone());
                         self.data_union.req_wait_list.lock().unwrap().remove(u.clone().uid, CardMode::ReqFriend);
                         send(rs, NReq::Single(Message::NReqSigle::SureFriendReq(u.uid)));
                     }
@@ -361,8 +361,8 @@ impl MainView {
             MUserCard::ReqFriendNone(u) => self.data_union.req_wait_list.lock().unwrap().remove(u.uid, CardMode::ReqFriend),
             MUserCard::ReqIntoGroupNone(u) => self.data_union.req_wait_list.lock().unwrap().remove(u.uid, CardMode::ReqIntoGroup),
             MUserCard::SureGroup(gr) => {
-                if let Some(u) = &mut *self.user.lock().unwrap() {
-                    u.add_group(gr.clone());
+                if let Some(u) = &self.user {
+                    u.lock().unwrap().add_group(gr.clone());
                     self.data_union.req_wait_list.lock().unwrap().remove(gr.clone().id, CardMode::ReqIntoGroup);
                     if let Some(tcp) = &mut self.req_stream {
                         send(tcp, NReq::Single(Message::NReqSigle::SureGroupReq(gr.id)));
@@ -376,10 +376,10 @@ impl MainView {
         self.tab_view.update(msg)
     }
     pub fn boost_set(&mut self) {
-        if let Some(x) = &*self.user.lock().unwrap() {
+        if let Some(x) = &self.user {
             self.search_page.user_info = x.clone();
-            self.user_name = x.name.clone();
-            self.chat_with_page.yo = x.to_ref()
+            self.user_name = x.lock().unwrap().name.clone();
+            self.chat_with_page.take_user(x.clone());
         }
         let (sender, recv) = mpsc::channel();
         self.recv = Some(recv);
@@ -400,7 +400,7 @@ impl MainView {
         });
         if let Some(tcp) = &mut self.req_stream {
             let du = self.data_union.clone();
-            let u = self.user.clone();
+            let u = self.user.clone().unwrap().clone();
             let tcp = tcp.try_clone().unwrap();
             let recv = self.recv.take().unwrap();
             let (st, rv) = channel();
@@ -434,7 +434,7 @@ impl MainView {
         }
         None
     }
-    fn sync(mut req: TcpStream, recv: Receiver<NPushStream>, data_union: Arc<DataUnion>, user: Arc<Mutex<Option<UserInfo>>>, send: Sender<MainScrDown>, talk_group: Arc<Mutex<GroupHeader>>) {
+    fn sync(mut req: TcpStream, recv: Receiver<NPushStream>, data_union: Arc<DataUnion>, user: Arc<Mutex<UserInfo>>, send: Sender<MainScrDown>, talk_group: Arc<Mutex<GroupHeader>>) {
         loop {
             if let Ok(m) = recv.recv() {
                 dbg!(&m);
@@ -452,10 +452,8 @@ impl MainView {
                     }
                     NPushStream::SureFriendReq(u) => {
                         if let Some(ur) = Self::get_user_ref(&mut req, u) {
-                            if let Some(user_info) = &mut *user.lock().unwrap() {
-                                user_info.add_friend(ur);
-                                println!("Add Fr");
-                            }
+                            user.lock().unwrap().add_friend(ur);
+                            println!("Add Fr");
                         }
                     }
                     NPushStream::Send(u, m) => {
@@ -488,10 +486,8 @@ impl MainView {
                         let ret: NReturnReq = serde_json::from_str(ret.as_str()).unwrap();
                         if let NReturnReq::GetGroupFromId(x) = ret {
                             if x.is_some() {
-                                if let Some(user) = &mut *user.lock().unwrap() {
-                                    if user.uid == s {
-                                        user.add_group(x.clone().unwrap().to_ref());
-                                    }
+                                if user.lock().unwrap().uid == s {
+                                    user.lock().unwrap().add_group(x.clone().unwrap().to_ref());
                                 }
                                 if talk_group.lock().unwrap().id == g {
                                     *talk_group.lock().unwrap() = x.unwrap();
